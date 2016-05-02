@@ -1,14 +1,22 @@
+from operator import attrgetter
 from importlib import import_module
+
 from django.conf import settings
 from django.core.urlresolvers import RegexURLResolver, RegexURLPattern
 from django.utils.module_loading import import_string
+
 from rest_framework.views import APIView
+from rest_framework_docs import SERIALIZER_FIELDS
 from rest_framework_docs.api_endpoint import ApiEndpoint
 
 
 class ApiDocumentation(object):
 
-    def __init__(self):
+    def __init__(self, filter_param=None):
+        """
+        :param filter_param: namespace or app_name
+        """
+        SERIALIZER_FIELDS.clear()
         self.endpoints = []
         try:
             root_urlconf = import_string(settings.API_URLCONF)
@@ -16,18 +24,18 @@ class ApiDocumentation(object):
             # Handle a case when there's no dot in ROOT_URLCONF
             root_urlconf = import_module(settings.API_URLCONF)
         if hasattr(root_urlconf, 'urls'):
-            self.get_all_view_names(root_urlconf.urls.urlpatterns)
+            self.get_all_view_names(root_urlconf.urls.urlpatterns, filter_param=filter_param)
         else:
-            self.get_all_view_names(root_urlconf.urlpatterns)
+            self.get_all_view_names(root_urlconf.urlpatterns, filter_param=filter_param)
 
-    def get_all_view_names(self, urlpatterns, parent_pattern=None):
+    def get_all_view_names(self, urlpatterns, parent_pattern=None, filter_param=None):
         for pattern in urlpatterns:
-            if isinstance(pattern, RegexURLResolver):
-                parent_pattern = None if pattern._regex == "^" else pattern
-                self.get_all_view_names(urlpatterns=pattern.url_patterns, parent_pattern=parent_pattern)
-            elif isinstance(pattern, RegexURLPattern) and self._is_drf_view(pattern) and not self._is_format_endpoint(pattern):
-                api_endpoint = ApiEndpoint(pattern, parent_pattern)
-                self.endpoints.append(api_endpoint)
+            if isinstance(pattern, RegexURLResolver) and (not filter_param or filter_param in [pattern.app_name, pattern.namespace]):
+                self.get_all_view_names(urlpatterns=pattern.url_patterns, parent_pattern=pattern, filter_param=filter_param)
+            elif isinstance(pattern, RegexURLPattern) and self._is_drf_view(pattern):
+                if not filter_param or (parent_pattern and filter_param in [parent_pattern.app_name, parent_pattern.namespace]):
+                    api_endpoint = ApiEndpoint(pattern, parent_pattern)
+                    self.endpoints.append(api_endpoint)
 
     def _is_drf_view(self, pattern):
         """
@@ -42,4 +50,4 @@ class ApiDocumentation(object):
         return '?P<format>' in pattern._regex
 
     def get_endpoints(self):
-        return self.endpoints
+        return sorted(self.endpoints, key=attrgetter('name', 'path'))
